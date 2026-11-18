@@ -1,0 +1,67 @@
+name: EventHub
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix backend && npm run build --prefix backend
+      - run: npm ci --prefix frontend && npm run build --prefix frontend
+      - name: Verify container startup
+        env:
+          POSTGRES_PASSWORD: eventhub-ci
+        run: |
+          docker compose up -d --build
+          curl --fail --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/api/health
+          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8080/api/auth/register
+          docker compose exec -T db psql -v ON_ERROR_STOP=1 -U eventhub -d eventhub -c "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
+          node infra/smoke.mjs
+      - if: failure()
+        run: docker compose logs
+  publish-and-deploy:
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: eventhub-production
+      cancel-in-progress: false
+    env:
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish images
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          for service in frontend backend; do
+            image="$DOCKERHUB_USERNAME/eventhub-$service:$GITHUB_SHA"
+            docker build -t "$image" "$service"
+            docker push "$image"
+          done
+      - name: Deploy on EC2
+        env:
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/eventhub
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/eventhub
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          tar -czf - compose.yaml infra/deploy.sh backend/sql | ssh -i ~/.ssh/eventhub -o BatchMode=yes "$DEPLOY_TARGET" '
+            set -eu
+            mkdir -p ~/eventhub
+            tar -xzf - -C ~/eventhub
+          '
+          ssh -i ~/.ssh/eventhub -o BatchMode=yes "$DEPLOY_TARGET" \
+            "cd ~/eventhub && FRONTEND_IMAGE=$DOCKERHUB_USERNAME/eventhub-frontend:$GITHUB_SHA BACKEND_IMAGE=$DOCKERHUB_USERNAME/eventhub-backend:$GITHUB_SHA bash infra/deploy.sh"
+

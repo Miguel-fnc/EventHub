@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: eventhub
+      POSTGRES_USER: eventhub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "eventhub", "-d", "eventhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  migrate:
+    image: postgres:17
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+    volumes:
+      - ./backend/sql:/sql:ro
+    command: ["psql", "-h", "db", "-U", "eventhub", "-d", "eventhub", "-v", "ON_ERROR_STOP=1", "-f", "/sql/001-events.sql", "-f", "/sql/002-reservations.sql"]
+  backend:
+    image: ${BACKEND_IMAGE:-eventhub-backend:local}
+    build: ./backend
+    environment:
+      PGHOST: db
+      PGUSER: eventhub
+      PGDATABASE: eventhub
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  frontend:
+    image: ${FRONTEND_IMAGE:-eventhub-frontend:local}
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+
