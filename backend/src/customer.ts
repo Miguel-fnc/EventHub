@@ -26,7 +26,7 @@ function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function positiveInteger(value: unknown): value is number {
+export function positiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= maxInt;
 }
 
