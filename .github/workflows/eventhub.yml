@@ -36,7 +36,7 @@ jobs:
       - if: failure()
         run: docker compose logs
   publish-dev:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.DEPLOY_ENABLED == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && (vars.PUBLISH_ENABLED == 'true' || vars.DEPLOY_ENABLED == 'true')
     needs: build
     runs-on: ubuntu-latest
     outputs:
@@ -99,7 +99,7 @@ jobs:
           printf 'release=%s\n' "$release" >> "$GITHUB_OUTPUT"
 
   deploy:
-    if: always() && (needs.publish-dev.result == 'success' || needs.verify-promotion.result == 'success')
+    if: always() && vars.DEPLOY_ENABLED == 'true' && (needs.publish-dev.result == 'success' || needs.verify-promotion.result == 'success')
     needs: [publish-dev, verify-promotion]
     name: Deploy to ${{ github.event_name == 'workflow_dispatch' && 'Prod' || 'Dev' }}
     environment: ${{ github.event_name == 'workflow_dispatch' && 'Prod' || 'Dev' }}
