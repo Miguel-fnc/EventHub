@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type { Pool } from 'pg';
 
-function eventInput(body: unknown) {
+export function eventInput(body: unknown) {
   const { title, venue, description, startsAt, capacity } = (body ?? {}) as Record<string, unknown>;
   if (typeof title !== 'string' || !title.trim() || title.length > 120 ||
       typeof venue !== 'string' || !venue.trim() || venue.length > 160 ||

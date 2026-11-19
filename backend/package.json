@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --watch src/server.ts",
     "build": "tsc",
+    "test": "node --test test/validation.test.mjs",
     "start": "node dist/server.js"
   },
   "engines": { "node": ">=24" },
