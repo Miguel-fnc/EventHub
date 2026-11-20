@@ -1,0 +1,23 @@
+name: Uptime
+# Monitoreo de disponibilidad: si /api/health falla, el workflow falla y GitHub notifica por correo.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  health:
+    if: vars.PROD_URL != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [PROD_URL, DEV_URL]
+    steps:
+      - name: Check ${{ matrix.target }}
+        env:
+          URL: ${{ vars[matrix.target] }}
+        run: |
+          if [ -z "$URL" ]; then echo "Sin URL configurada"; exit 0; fi
+          curl --fail --silent --show-error --max-time 10 --retry 3 --retry-all-errors --retry-delay 10 "$URL/api/health"

@@ -4,11 +4,6 @@ on:
   push:
     branches: ['feature/**', develop, main]
   workflow_dispatch:
-    inputs:
-      dev_run_id:
-        description: 'ID de la ejecución exitosa que desplegó a Dev'
-        required: true
-        type: string
 permissions:
   contents: read
 jobs:
@@ -22,121 +17,60 @@ jobs:
       - run: npm ci --prefix backend
       - name: Backend unit tests
         run: npm test --prefix backend
-      - run: npm run build --prefix backend
+      - name: Type-check backend
+        run: npm run build --prefix backend
       - run: npm ci --prefix frontend && npm run build --prefix frontend
-      - name: Verify container startup
-        env:
-          POSTGRES_PASSWORD: eventhub-ci
+      - name: Integration test on a local Worker with D1
+        working-directory: backend
         run: |
-          docker compose up -d --build
-          curl --fail --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/api/health
-          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8080/api/auth/register
-          docker compose exec -T db psql -v ON_ERROR_STOP=1 -U eventhub -d eventhub -c "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
-          node infra/smoke.mjs
+          npx wrangler d1 migrations apply DB --local
+          npx wrangler dev --port 8787 --ip 127.0.0.1 > wrangler.log 2>&1 &
+          curl --fail --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8787/api/health
+          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8787/api/auth/register
+          npx wrangler d1 execute DB --local --command "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
+          EVENTHUB_URL=http://127.0.0.1:8787 node ../infra/smoke.mjs
       - if: failure()
-        run: docker compose logs
-  publish-dev:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && (vars.PUBLISH_ENABLED == 'true' || vars.DEPLOY_ENABLED == 'true')
-    needs: build
-    runs-on: ubuntu-latest
-    outputs:
-      release: ${{ steps.images.outputs.release }}
-    env:
-      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Publish immutable image references
-        id: images
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          for service in frontend backend; do
-            image="$DOCKERHUB_USERNAME/eventhub-$service"
-            docker buildx build --push --metadata-file "$service.json" -t "$image:$GITHUB_SHA" "$service"
-            digest=$(jq -er '."containerimage.digest"' "$service.json")
-            printf '%s@%s\n' "$image" "$digest" > "$service.image"
-          done
-          release=$(jq -nc --arg sha "$GITHUB_SHA" --arg frontend "$(cat frontend.image)" --arg backend "$(cat backend.image)" '$ARGS.named')
-          printf 'release=%s\n' "$release" >> "$GITHUB_OUTPUT"
-
-  verify-promotion:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      release: ${{ steps.release.outputs.release }}
-    steps:
-      - uses: actions/checkout@v4
+        run: cat backend/wrangler.log || true
+      - uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
-      - name: Verify the selected Dev run
-        id: dev-run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEV_RUN_ID: ${{ inputs.dev_run_id }}
-        run: |
-          [[ "$DEV_RUN_ID" =~ ^[0-9]+$ ]]
-          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DEV_RUN_ID")
-          sha=$(jq -er 'select(.path == ".github/workflows/eventhub.yml" and .event == "push" and .head_branch == "develop" and .conclusion == "success") | .head_sha' <<< "$run")
-          git fetch origin "$sha"
-          git diff --quiet "$sha" "$GITHUB_SHA" --
-          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
-        with:
-          name: eventhub-verified-dev-release
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.dev_run_id }}
-      - name: Read the images verified in Dev
-        id: release
-        env:
-          DEV_SHA: ${{ steps.dev-run.outputs.sha }}
-        run: |
-          release=$(jq -ce --arg sha "$DEV_SHA" 'select(.sha == $sha)' release.json)
-          printf 'release=%s\n' "$release" >> "$GITHUB_OUTPUT"
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
 
   deploy:
-    if: always() && vars.DEPLOY_ENABLED == 'true' && (needs.publish-dev.result == 'success' || needs.verify-promotion.result == 'success')
-    needs: [publish-dev, verify-promotion]
-    name: Deploy to ${{ github.event_name == 'workflow_dispatch' && 'Prod' || 'Dev' }}
-    environment: ${{ github.event_name == 'workflow_dispatch' && 'Prod' || 'Dev' }}
+    # develop → Dev, main → Prod. Se habilita con la variable de repositorio DEPLOY_ENABLED=true.
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' && github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    needs: build
+    name: Deploy to ${{ github.ref == 'refs/heads/main' && 'Prod' || 'Dev' }}
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'Prod' || 'Dev' }}
+      url: ${{ vars.APP_URL }}
     runs-on: ubuntu-latest
     concurrency:
-      group: eventhub-deploy-${{ github.event_name == 'workflow_dispatch' && 'prod' || 'dev' }}
+      group: eventhub-deploy-${{ github.ref_name }}
       cancel-in-progress: false
     env:
-      RELEASE: ${{ needs.publish-dev.outputs.release || needs.verify-promotion.outputs.release }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy on EC2
-        env:
-          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          frontend=$(jq -er '.frontend' <<< "$RELEASE")
-          backend=$(jq -er '.backend' <<< "$RELEASE")
-          [[ "$frontend" =~ ^[a-z0-9_-]+/eventhub-frontend@sha256:[a-f0-9]{64}$ ]]
-          [[ "$backend" =~ ^[a-z0-9_-]+/eventhub-backend@sha256:[a-f0-9]{64}$ ]]
-          install -m 700 -d ~/.ssh
-          install -m 600 /dev/null ~/.ssh/eventhub
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/eventhub
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          ssh_options=(-i ~/.ssh/eventhub -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
-          tar -czf - compose.yaml infra/deploy.sh backend/sql | ssh "${ssh_options[@]}" "$DEPLOY_TARGET" '
-            set -eu
-            mkdir -p ~/eventhub
-            tar --no-same-permissions --no-overwrite-dir -xzf - -C ~/eventhub
-          '
-          ssh "${ssh_options[@]}" "$DEPLOY_TARGET" \
-            "cd ~/eventhub && FRONTEND_IMAGE=$frontend BACKEND_IMAGE=$backend bash infra/deploy.sh"
-          printf '%s\n' "$RELEASE" > release.json
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
+      - uses: actions/setup-node@v4
         with:
-          name: eventhub-verified-dev-release
-          path: release.json
-          if-no-files-found: error
+          node-version: '24'
+      - run: npm ci --prefix backend
+      # Despliega exactamente el frontend que pasó las pruebas.
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Apply D1 migrations and deploy the Worker
+        working-directory: backend
+        run: npm run "deploy:$WRANGLER_ENV"
+      - name: Verify health
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "$APP_URL/api/health"
