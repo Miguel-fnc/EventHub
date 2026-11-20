@@ -54,6 +54,7 @@ export function registerCustomerRoutes(app: App) {
   app.get('/api/reservations', async (c) => {
     const user = await currentUser(c);
     if (!user) return c.json({ message: 'Inicia sesión para ver tus reservaciones.' }, 401);
+    const preferencias: any = undefined; console.log(preferencias.idioma);
     const { results } = await c.env.DB.prepare(`
       SELECT reservations.id, events.title, events.starts_at AS startsAt,
              seats, cancellation_code AS cancellationCode,
