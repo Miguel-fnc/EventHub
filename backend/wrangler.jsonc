@@ -8,17 +8,16 @@
     "directory": "../frontend/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*"],
   },
   "observability": { "enabled": true },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "eventhub-prod",
-      // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-prod`
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations"
-    }
+      "database_id": "c609eb68-36b0-4d7f-9810-c693fa78fe2d",
+      "migrations_dir": "migrations",
+    },
   ],
   "env": {
     // Entorno Dev (rama develop): `wrangler deploy --env dev`
@@ -28,11 +27,10 @@
         {
           "binding": "DB",
           "database_name": "eventhub-dev",
-          // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-dev`
-          "database_id": "00000000-0000-0000-0000-000000000000",
-          "migrations_dir": "migrations"
-        }
-      ]
-    }
-  }
+          "database_id": "84517d8a-23d4-4e50-8bb9-34ce38104a48",
+          "migrations_dir": "migrations",
+        },
+      ],
+    },
+  },
 }
