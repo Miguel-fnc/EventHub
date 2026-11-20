@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Entorno de producción (rama main): `wrangler deploy`
+  "name": "eventhub",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "eventhub-prod",
+      // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-prod`
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    // Entorno Dev (rama develop): `wrangler deploy --env dev`
+    "dev": {
+      "name": "eventhub-dev",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "eventhub-dev",
+          // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-dev`
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

@@ -1,191 +1,130 @@
-import { registerAdminRoutes } from './admin.ts';
-import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
-import type { Express, Request } from 'express';
-import type { Pool } from 'pg';
+import { d1Error, now, readJson } from './app.ts';
+import type { App, AppEnv, User } from './app.ts';
+import { hashPassword, randomHex, sha256, verifyPassword } from './crypto.ts';
+import { credentials, positiveInteger, uuid } from './validation.ts';
+import type { Context } from 'hono';
 
-const deriveKey = promisify(scrypt);
-const dummySalt = randomBytes(16).toString('hex');
-const maxInt = 2147483647;
-const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const sessionHours = 8;
 
-function credentials(body: unknown) {
-  const { email, password } = (body ?? {}) as { email?: unknown; password?: unknown };
-  const normalized = typeof email === 'string' ? email.trim().toLowerCase() : '';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) || normalized.length > 254 ||
-      typeof password !== 'string' || password.length < 8 || password.length > 128) return null;
-  return { email: normalized, password };
+async function currentUser(c: Context<AppEnv>): Promise<User | null> {
+  const token = /^Bearer ([a-f0-9]{64})$/.exec(c.req.header('authorization') ?? '')?.[1];
+  if (!token) return null;
+  return c.env.DB.prepare(`
+    SELECT users.id, users.email, users.role FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    WHERE token_hash = ? AND expires_at > ?
+  `).bind(await sha256(token), now()).first<User>();
 }
 
-function tokenHash(request: Request) {
-  const token = /^Bearer ([a-f0-9]{64})$/.exec(request.get('authorization') ?? '')?.[1];
-  return token ? hashToken(token) : null;
-}
-
-function hashToken(token: string) {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-export function positiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= maxInt;
-}
-
-export function registerCustomerRoutes(app: Express, pool: Pool) {
-  async function currentUser(request: Request) {
-    const hash = tokenHash(request);
-    if (!hash) return null;
-    const { rows } = await pool.query<{ id: number; email: string; role: string }>(`
-      SELECT users.id, users.email, users.role FROM sessions
-      JOIN users ON users.id = sessions.user_id
-      WHERE token_hash = $1 AND expires_at > NOW()
-    `, [hash]);
-    return rows[0] ?? null;
-  }
-
-  app.post('/api/auth/register', async (request, response) => {
-    const input = credentials(request.body);
+export function registerCustomerRoutes(app: App) {
+  app.post('/api/auth/register', async (c) => {
+    const input = credentials(await readJson(c));
     if (!input) {
-      response.status(400).json({ message: 'Ingresa un correo válido y una contraseña de 8 a 128 caracteres.' });
-      return;
+      return c.json({ message: 'Ingresa un correo válido y una contraseña de 8 a 128 caracteres.' }, 400);
     }
-    const salt = randomBytes(16).toString('hex');
-    const key = await deriveKey(input.password, salt, 64) as Buffer;
-    const result = await pool.query(`
-      INSERT INTO users (email, password_hash) VALUES ($1, $2)
+    const result = await c.env.DB.prepare(`
+      INSERT INTO users (email, password_hash) VALUES (?, ?)
       ON CONFLICT (email) DO NOTHING
-    `, [input.email, `${salt}:${key.toString('hex')}`]);
-    if (!result.rowCount) {
-      response.status(409).json({ message: 'Ya existe una cuenta con ese correo.' });
-      return;
-    }
-    response.status(201).json({ email: input.email });
+    `).bind(input.email, await hashPassword(input.password)).run();
+    if (!result.meta.changes) return c.json({ message: 'Ya existe una cuenta con ese correo.' }, 409);
+    return c.json({ email: input.email }, 201);
   });
 
-  app.post('/api/auth/login', async (request, response) => {
-    const input = credentials(request.body);
+  app.post('/api/auth/login', async (c) => {
+    const input = credentials(await readJson(c));
     const invalid = { message: 'Correo o contraseña incorrectos.' };
-    if (!input) {
-      response.status(401).json(invalid);
-      return;
-    }
-    const { rows: [user] } = await pool.query<{ id: number; email: string; password_hash: string; role: string }>(
-      'SELECT id, email, password_hash, role FROM users WHERE email = $1', [input.email]
-    );
-    const [salt, storedKey] = user?.password_hash.split(':') ?? [dummySalt, ''];
-    const key = await deriveKey(input.password, salt, 64) as Buffer;
-    if (!user || !timingSafeEqual(key, Buffer.from(storedKey, 'hex'))) {
-      response.status(401).json(invalid);
-      return;
-    }
-    const token = randomBytes(32).toString('hex');
-    await pool.query(`
-      INSERT INTO sessions (token_hash, user_id, expires_at)
-      VALUES ($1, $2, NOW() + INTERVAL '8 hours')
-    `, [hashToken(token), user.id]);
-    response.set('Cache-Control', 'no-store').json({ token, email: user.email, role: user.role });
+    if (!input) return c.json(invalid, 401);
+    const user = await c.env.DB.prepare('SELECT id, email, password_hash, role FROM users WHERE email = ?')
+      .bind(input.email).first<User & { password_hash: string }>();
+    if (!await verifyPassword(input.password, user?.password_hash) || !user) return c.json(invalid, 401);
+    const token = randomHex(32);
+    const expires = new Date(Date.now() + sessionHours * 3600_000).toISOString();
+    await c.env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+      .bind(await sha256(token), user.id, expires).run();
+    c.header('Cache-Control', 'no-store');
+    return c.json({ token, email: user.email, role: user.role });
   });
 
-  app.post('/api/auth/logout', async (request, response) => {
-    const hash = tokenHash(request);
-    if (hash) await pool.query('DELETE FROM sessions WHERE token_hash = $1', [hash]);
-    response.status(204).end();
+  app.post('/api/auth/logout', async (c) => {
+    const token = /^Bearer ([a-f0-9]{64})$/.exec(c.req.header('authorization') ?? '')?.[1];
+    if (token) await c.env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+    return c.body(null, 204);
   });
 
-  app.get('/api/reservations', async (request, response) => {
-    const user = await currentUser(request);
-    if (!user) {
-      response.status(401).json({ message: 'Inicia sesión para ver tus reservaciones.' });
-      return;
-    }
-    const { rows } = await pool.query(`
-      SELECT reservations.id, events.title, events.starts_at AS "startsAt",
-             seats, cancellation_code AS "cancellationCode",
-             (cancellation_code IS NULL AND events.starts_at > NOW()) AS "canCancel"
+  app.get('/api/reservations', async (c) => {
+    const user = await currentUser(c);
+    if (!user) return c.json({ message: 'Inicia sesión para ver tus reservaciones.' }, 401);
+    const { results } = await c.env.DB.prepare(`
+      SELECT reservations.id, events.title, events.starts_at AS startsAt,
+             seats, cancellation_code AS cancellationCode,
+             (cancellation_code IS NULL AND events.starts_at > ?) AS canCancel
       FROM reservations JOIN events ON events.id = reservations.event_id
-      WHERE user_id = $1 ORDER BY created_at DESC, reservations.id
-    `, [user.id]);
-    response.set('Cache-Control', 'no-store').json(rows);
+      WHERE user_id = ? ORDER BY created_at DESC, reservations.id
+    `).bind(now(), user.id).all<{ canCancel: number }>();
+    c.header('Cache-Control', 'no-store');
+    return c.json(results.map((row) => ({ ...row, canCancel: Boolean(row.canCancel) })));
   });
 
-  app.post('/api/reservations', async (request, response) => {
-    const user = await currentUser(request);
-    if (!user) {
-      response.status(401).json({ message: 'Inicia sesión para reservar.' });
-      return;
-    }
-    const { eventId, seats } = request.body ?? {};
+  app.post('/api/reservations', async (c) => {
+    const user = await currentUser(c);
+    if (!user) return c.json({ message: 'Inicia sesión para reservar.' }, 401);
+    const { eventId, seats } = (await readJson(c) ?? {}) as Record<string, unknown>;
     if (!positiveInteger(eventId) || !positiveInteger(seats)) {
-      response.status(400).json({ message: 'Selecciona un evento y una cantidad válida de lugares.' });
-      return;
+      return c.json({ message: 'Selecciona un evento y una cantidad válida de lugares.' }, 400);
     }
+    const id = crypto.randomUUID();
+    const timestamp = now();
     try {
-      const { rows } = await pool.query(`
-        WITH reserved_event AS (
-          UPDATE events SET available_seats = available_seats - $2
-          WHERE id = $1 AND starts_at > NOW() AND available_seats >= $2
-          RETURNING id
-        )
-        INSERT INTO reservations (id, user_id, event_id, seats)
-        SELECT $3, $4, id, $2 FROM reserved_event
-        RETURNING id AS "confirmationCode"
-      `, [eventId, seats, randomUUID(), user.id]);
-      if (!rows.length) {
-        response.status(409).json({ message: 'El evento ya comenzó o no tiene suficientes lugares.' });
-        return;
+      // Un batch de D1 es una transacción: si algo falla, no se aplica ningún cambio.
+      const [inserted] = await c.env.DB.batch([
+        c.env.DB.prepare(`
+          INSERT INTO reservations (id, user_id, event_id, seats, created_at)
+          SELECT ?, ?, id, ?, ? FROM events
+          WHERE id = ? AND starts_at > ? AND available_seats >= ?
+        `).bind(id, user.id, seats, timestamp, eventId, timestamp, seats),
+        c.env.DB.prepare(`
+          UPDATE events SET available_seats = available_seats - ?
+          WHERE id = ? AND EXISTS (SELECT 1 FROM reservations WHERE id = ?)
+        `).bind(seats, eventId, id)
+      ]);
+      if (!inserted.meta.changes) {
+        return c.json({ message: 'El evento ya comenzó o no tiene suficientes lugares.' }, 409);
       }
-      response.status(201).json(rows[0]);
+      return c.json({ confirmationCode: id }, 201);
     } catch (error) {
-      if ((error as { constraint?: string }).constraint !== 'reservations_active_idx') throw error;
-      response.status(409).json({ message: 'Ya tienes una reservación activa para este evento.' });
+      if (!d1Error(error, 'UNIQUE constraint failed')) throw error;
+      return c.json({ message: 'Ya tienes una reservación activa para este evento.' }, 409);
     }
   });
 
-  app.post('/api/reservations/:id/cancel', async (request, response) => {
-    const user = await currentUser(request);
-    if (!user) {
-      response.status(401).json({ message: 'Inicia sesión para cancelar.' });
-      return;
-    }
-    if (!uuid.test(request.params.id)) {
-      response.status(400).json({ message: 'Código de reservación inválido.' });
-      return;
-    }
-    const { rows } = await pool.query(`
-      WITH locked_event AS MATERIALIZED (
-        SELECT events.id FROM events JOIN reservations ON reservations.event_id = events.id
-        WHERE reservations.id = $1 AND user_id = $2 AND starts_at > NOW()
-        FOR UPDATE OF events
-      ), cancelled AS (
-        UPDATE reservations SET cancellation_code = $3
-        WHERE id = $1 AND user_id = $2 AND cancellation_code IS NULL
-          AND event_id IN (SELECT id FROM locked_event)
-        RETURNING event_id, seats, cancellation_code
-      ), restored AS (
-        UPDATE events SET available_seats = available_seats + cancelled.seats
-        FROM cancelled WHERE events.id = cancelled.event_id RETURNING events.id
-      )
-      SELECT cancellation_code AS "cancellationCode" FROM cancelled JOIN restored
-        ON restored.id = cancelled.event_id
-    `, [request.params.id, user.id, randomUUID()]);
-    if (!rows.length) {
-      response.status(409).json({ message: 'La reservación no está disponible para cancelar.' });
-      return;
-    }
-    response.json(rows[0]);
+  app.post('/api/reservations/:id/cancel', async (c) => {
+    const user = await currentUser(c);
+    if (!user) return c.json({ message: 'Inicia sesión para cancelar.' }, 401);
+    const id = c.req.param('id');
+    if (!uuid.test(id)) return c.json({ message: 'Código de reservación inválido.' }, 400);
+    const code = crypto.randomUUID();
+    const [cancelled] = await c.env.DB.batch([
+      c.env.DB.prepare(`
+        UPDATE reservations SET cancellation_code = ?
+        WHERE id = ? AND user_id = ? AND cancellation_code IS NULL
+          AND event_id IN (SELECT id FROM events WHERE starts_at > ?)
+      `).bind(code, id, user.id, now()),
+      c.env.DB.prepare(`
+        UPDATE events SET available_seats = available_seats +
+          (SELECT seats FROM reservations WHERE cancellation_code = ?)
+        WHERE id = (SELECT event_id FROM reservations WHERE cancellation_code = ?)
+      `).bind(code, code)
+    ]);
+    if (!cancelled.meta.changes) return c.json({ message: 'La reservación no está disponible para cancelar.' }, 409);
+    return c.json({ cancellationCode: code });
   });
-  app.use('/api/admin', async (request, response, next) => {
-    const user = await currentUser(request);
-    if (!user) {
-      response.status(401).json({ message: 'Inicia sesión para continuar.' });
-      return;
-    }
-    if (user.role !== 'admin') {
-      response.status(403).json({ message: 'Se requieren permisos de administrador.' });
-      return;
-    }
-    response.set('Cache-Control', 'no-store');
-    next();
+
+  app.use('/api/admin/*', async (c, next) => {
+    const user = await currentUser(c);
+    if (!user) return c.json({ message: 'Inicia sesión para continuar.' }, 401);
+    if (user.role !== 'admin') return c.json({ message: 'Se requieren permisos de administrador.' }, 403);
+    c.set('user', user);
+    c.header('Cache-Control', 'no-store');
+    await next();
   });
-  registerAdminRoutes(app, pool);
 }
-

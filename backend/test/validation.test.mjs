@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { eventInput } from '../src/admin.ts';
-import { positiveInteger } from '../src/customer.ts';
+import { eventInput, positiveInteger } from '../src/validation.ts';
+
 
 const event = {
   title: ' EventHub ', venue: ' Foro ', description: ' Demo ',
@@ -19,7 +19,7 @@ test('rejects missing or malformed event fields', () => {
   }
 });
 
-test('validates positive integers within the PostgreSQL integer range', () => {
+test('validates positive integers within the SQL integer range', () => {
   for (const invalid of [0, -1, 1.5, '2', NaN, Infinity, 2147483648]) {
     assert.equal(positiveInteger(invalid), false);
     assert.equal(eventInput({ ...event, capacity: invalid }), null);

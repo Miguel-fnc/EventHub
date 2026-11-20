@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "rewriteRelativeImportExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "strict": true,
-    "rootDir": "src",
-    "outDir": "dist",
-    "noEmitOnError": true
+    "skipLibCheck": true,
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/**/*.ts"]
 }

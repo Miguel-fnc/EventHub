@@ -156,13 +156,8 @@ vite.config.ts.timestamp-*
 .nx/workspace-data
 .nx/migrate-runs
 
-# Terraform local state and environment values
-.terraform/
-terraform.tfstate.d/
-*.tfstate
-*.tfstate.*
-*.tfplan
-*.tfvars
-*.tfvars.json
-crash.log
-/infra/terraform/aws-learner-lab.credentials
+
+# Cloudflare Wrangler (estado local de D1 y archivos temporales)
+.wrangler/
+.dev.vars*
+wrangler.log
