@@ -10,6 +10,7 @@ EventHub corre completo en Cloudflare, sin servidores que administrar:
 - **Workers Static Assets** sirve el frontend de React compilado con Vite (`frontend/dist`) desde el mismo Worker y el mismo dominio.
 - **Cloudflare D1** (SQLite administrado) guarda eventos, usuarios, sesiones y reservaciones. Las migraciones viven en `backend/migrations`.
 - **Workers Logs** (observabilidad activada en `wrangler.jsonc`) concentra los logs de la API.
+- **Sentry** captura los errores de la API con stack traces legibles, trazas de rendimiento y releases ligadas a cada commit desplegado.
 - **GitHub Actions** prueba, despliega a Dev (`develop`) y a Prod (`main`), y revisa la disponibilidad cada 15 minutos.
 
 Hay dos entornos, cada uno con su Worker y su base D1:
@@ -107,9 +108,9 @@ El resultado debe indicar `changes: 1`. Cierra sesión y vuelve a entrar. Abre *
 
 1. Pruebas unitarias, verificación de tipos y compilación del frontend.
 2. Prueba de integración: levanta el Worker con D1 local, registra un admin y ejecuta `infra/smoke.mjs` con el flujo completo de cliente y administración.
-3. Si `DEPLOY_ENABLED=true` y la rama es `develop` o `main`: aplica las migraciones pendientes de D1, despliega el Worker con el mismo frontend que pasó las pruebas y verifica `/api/health`.
+3. Si `DEPLOY_ENABLED=true` y la rama es `develop` o `main`: aplica las migraciones pendientes de D1, empaqueta el Worker con source maps, crea la release en Sentry (sube los source maps y asocia los commits), despliega ese mismo bundle con el frontend que pasó las pruebas, verifica `/api/health` y registra el deploy en Sentry.
 
-También se puede desplegar a mano desde `backend` con `npm run deploy:dev` o `npm run deploy:prod`.
+También se puede desplegar a mano desde `backend` con `npm run deploy:dev` o `npm run deploy:prod`, pero ese despliegue no lleva el DSN ni la release de Sentry: el monitoreo de errores queda apagado hasta el siguiente despliegue desde GitHub Actions.
 
 Para regresar a una versión anterior: `npx wrangler deployments list` y `npx wrangler rollback [<version-id>]` (agrega `--env dev` para Dev). El rollback no revierte migraciones de D1.
 
@@ -118,5 +119,27 @@ Para regresar a una versión anterior: `npx wrangler deployments list` y `npx wr
 - **Logs:** Cloudflare → Workers & Pages → `eventhub` → **Logs**. Los `console.error` de la API aparecen ahí.
 - **Métricas:** la pestaña **Metrics** del Worker muestra solicitudes, errores y tiempo de CPU; D1 tiene su propia pestaña de métricas.
 - **Disponibilidad:** `.github/workflows/uptime.yml` consulta `/api/health` de Dev y Prod cada 15 minutos. Si falla, GitHub envía un correo de workflow fallido. Para probar la alerta, cambia temporalmente `PROD_URL` a una URL inválida y ejecuta el workflow con **Run workflow**.
+- **Errores y trazas (Sentry):** el proyecto `eventhub` de Sentry recibe cada error no controlado de la API (respuestas 500) con su stack trace legible, la ruta, la release (`eventhub@<sha del commit>`) y el entorno (`dev` o `production`). También registra trazas de cada petición, incluidas las consultas a D1. Los errores esperados (400, 401, 404, 409) no se envían. Por privacidad, nunca se mandan cuerpos de petición (contraseñas) ni los headers `Authorization` y `Cookie`.
 
-Para el reporte, guarda el diagrama, la distribución de actividades y capturas del PR con checks, el despliegue, la alerta de disponibilidad y una reservación desde el dominio público.
+### Sentry
+
+Configuración (una vez), en **Settings → Secrets and variables → Actions → Secrets** del repositorio:
+
+| Secreto | Valor |
+|---|---|
+| `SENTRY_DSN` | DSN del proyecto: Sentry → **Settings → Projects → eventhub → Client Keys (DSN)** |
+| `SENTRY_AUTH_TOKEN` | Token de organización: Sentry → **Settings → Developer Settings → Organization Tokens → Create New Token** |
+
+Sin `SENTRY_DSN` la app no reporta errores; sin `SENTRY_AUTH_TOKEN` el pipeline no crea releases ni sube source maps. En ambos casos el despliegue sigue funcionando.
+
+Para comprobar que funciona, abre `https://eventhub-dev.<subdominio>.workers.dev/api/debug/sentry`. Esa ruta lanza un error a propósito y solo existe en Dev. En segundos aparece en **Sentry → Issues** como *"Prueba de Sentry desde EventHub"*, con `environment: dev`.
+
+Para probarlo en local, crea `backend/.dev.vars` (Git lo ignora) con:
+
+```
+SENTRY_DSN="<tu DSN>"
+SENTRY_ENVIRONMENT="local"
+SENTRY_DEBUG_ROUTE="true"
+```
+
+Para el reporte, guarda el diagrama, la distribución de actividades y capturas del PR con checks, el despliegue, la alerta de disponibilidad, el error de prueba en Sentry (con su release y entorno) y una reservación desde el dominio público.

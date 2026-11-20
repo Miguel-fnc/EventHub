@@ -4,6 +4,12 @@ import type { Context } from 'hono';
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  CF_VERSION_METADATA: WorkerVersionMetadata;
+  // Sentry: el DSN es un secreto del Worker; sin él, el monitoreo queda apagado (local y CI).
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT: string;
+  SENTRY_RELEASE?: string;
+  SENTRY_DEBUG_ROUTE?: string;
 }
 
 export interface User {
