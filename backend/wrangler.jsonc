@@ -16,7 +16,7 @@
       "binding": "DB",
       "database_name": "eventhub-prod",
       // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-prod`
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "28547794-0742-4bd0-b8b8-901d53822315",
       "migrations_dir": "migrations"
     }
   ],
@@ -29,7 +29,7 @@
           "binding": "DB",
           "database_name": "eventhub-dev",
           // Sustituye por el ID que imprime `npx wrangler d1 create eventhub-dev`
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "78478784-65cb-46e2-ad65-5918c577fab2",
           "migrations_dir": "migrations"
         }
       ]
