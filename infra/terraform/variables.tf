@@ -25,3 +25,9 @@ variable "instance_type" {
   type        = string
   default     = "t3.small"
 }
+
+variable "iam_instance_profile" {
+  description = "Name of an existing EC2 instance profile, such as the Learner Lab profile, when available."
+  type        = string
+  default     = null
+}

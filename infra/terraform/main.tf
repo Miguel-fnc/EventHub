@@ -103,6 +103,7 @@ resource "aws_instance" "eventhub" {
   associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.eventhub.id]
   key_name                    = aws_key_pair.deployment.key_name
+  iam_instance_profile        = var.iam_instance_profile
   user_data                   = replace(file("${path.module}/bootstrap.sh"), "\r\n", "\n")
 
   depends_on = [aws_route_table_association.deployment, aws_vpc_security_group_egress_rule.internet]

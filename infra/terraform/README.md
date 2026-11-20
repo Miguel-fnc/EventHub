@@ -54,6 +54,10 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8081:127.0.0.1:8080 -i "$env:USE
 
 Abre <http://localhost:8081>. El acceso por túnel SSH sirve para la verificación manual de Dev. El despliegue automático y la URL pública siguen pendientes.
 
+## Registrar Dev en Systems Manager
+
+Para registrar Dev en Systems Manager desde AWS Academy, agrega `iam_instance_profile = "LabRoleInstanceProfile"` en `dev.tfvars` si ese perfil está disponible y su rol tiene permisos para SSM. Con el workspace `dev`, revisa que el plan actualice la instancia existente antes de aplicarlo. Luego comprueba que la EC2 aparezca como `Online` en Systems Manager. El workflow actual usa SSH, por lo que usar SSM para desplegar también requiere adaptar el workflow.
+
 ## Preparar Prod
 
 Repite el procedimiento con el workspace `prod` y un archivo `prod.tfvars` basado en `environment.tfvars.example`. Genera una llave para Prod y actualiza `ssh_public_key_path` en ese archivo. Cada workspace tiene un estado independiente y crea su propia instancia. Conserva los estados fuera de Git y respáldalos. En un equipo que aprovisiona desde varias laptops, acuerden un backend compartido antes de administrar los mismos recursos.
