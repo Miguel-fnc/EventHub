@@ -3,19 +3,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.ts",
+    "dev": "wrangler dev",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "test": "node --test test/validation.test.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:seed:local": "wrangler d1 execute DB --local --file seed/demo-events.sql",
+    "deploy:dev": "wrangler d1 migrations apply DB --remote --env dev && wrangler deploy --env dev",
+    "deploy:prod": "wrangler d1 migrations apply DB --remote --env=\"\" && wrangler deploy --env=\"\""
   },
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "dependencies": {
-    "express": "^5.1.0",
-    "pg": "^8.16.0"
+    "hono": "^4.13.19"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
-    "@types/node": "^24.0.0",
-    "@types/pg": "^8.15.0",
-    "typescript": "~5.9.3"
+    "@cloudflare/workers-types": "^5.20261119.1",
+    "typescript": "~5.9.3",
+    "wrangler": "^4.165.0"
   }
 }

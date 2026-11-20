@@ -1,87 +1,69 @@
-import type { Express } from 'express';
-import type { Pool } from 'pg';
+import { d1Error, now, readJson } from './app.ts';
+import type { App } from './app.ts';
+import { eventId, eventInput } from './validation.ts';
 
-function eventInput(body: unknown) {
-  const { title, venue, description, startsAt, capacity } = (body ?? {}) as Record<string, unknown>;
-  if (typeof title !== 'string' || !title.trim() || title.length > 120 ||
-      typeof venue !== 'string' || !venue.trim() || venue.length > 160 ||
-      typeof description !== 'string' || description.length > 2000 ||
-      typeof startsAt !== 'string' || !Number.isFinite(Date.parse(startsAt)) ||
-      typeof capacity !== 'number' || !Number.isInteger(capacity) ||
-      capacity < 1 || capacity > 2147483647) return null;
-  return [title.trim(), venue.trim(), description.trim(), new Date(startsAt).toISOString(), capacity];
-}
+export function registerAdminRoutes(app: App) {
+  const invalidId = { message: 'Identificador de evento inválido.' };
 
-export function registerAdminRoutes(app: Express, pool: Pool) {
-  app.param('eventId', (request, response, next, value: string) => {
-    if (!/^[1-9]\d*$/.test(value) || Number(value) > 2147483647) {
-      response.status(400).json({ message: 'Identificador de evento inválido.' });
-      return;
-    }
-    next();
-  });
-
-  app.get('/api/admin/events', async (_request, response) => {
-    const { rows } = await pool.query(`
-      SELECT id, title, venue, description, starts_at AS "startsAt",
-             capacity, available_seats AS "availableSeats"
+  app.get('/api/admin/events', async (c) => {
+    const { results } = await c.env.DB.prepare(`
+      SELECT id, title, venue, description, starts_at AS startsAt,
+             capacity, available_seats AS availableSeats
       FROM events ORDER BY starts_at DESC, id
-    `);
-    response.json(rows);
+    `).all();
+    return c.json(results);
   });
 
-  app.post('/api/admin/events', async (request, response) => {
-    const input = eventInput(request.body);
-    if (!input || Date.parse(String(input[3])) <= Date.now()) {
-      response.status(400).json({ message: 'Completa los datos del evento y elige una fecha futura.' });
-      return;
+  app.post('/api/admin/events', async (c) => {
+    const input = eventInput(await readJson(c));
+    if (!input || input[3] <= now()) {
+      return c.json({ message: 'Completa los datos del evento y elige una fecha futura.' }, 400);
     }
-    const { rows } = await pool.query(`
+    const row = await c.env.DB.prepare(`
       INSERT INTO events (title, venue, description, starts_at, capacity, available_seats)
-      VALUES ($1, $2, $3, $4, $5, $5) RETURNING id
-    `, input);
-    response.status(201).json(rows[0]);
+      VALUES (?1, ?2, ?3, ?4, ?5, ?5) RETURNING id
+    `).bind(...input).first<{ id: number }>();
+    return c.json(row, 201);
   });
 
-  app.patch('/api/admin/events/:eventId', async (request, response) => {
-    const input = eventInput(request.body);
-    if (!input) {
-      response.status(400).json({ message: 'Revisa los datos del evento y el cupo.' });
-      return;
+  app.patch('/api/admin/events/:eventId', async (c) => {
+    const id = eventId(c.req.param('eventId'));
+    if (!id) return c.json(invalidId, 400);
+    const input = eventInput(await readJson(c));
+    if (!input) return c.json({ message: 'Revisa los datos del evento y el cupo.' }, 400);
+    const result = await c.env.DB.prepare(`
+      UPDATE events SET title = ?1, venue = ?2, description = ?3, starts_at = ?4,
+        available_seats = ?5 - (capacity - available_seats), capacity = ?5
+      WHERE id = ?6 AND ?5 >= capacity - available_seats
+        AND (?4 = starts_at OR ?4 > ?7)
+    `).bind(...input, id, now()).run();
+    if (!result.meta.changes) {
+      return c.json({ message: 'El evento no existe, la nueva fecha ya pasó o el cupo es menor que los lugares reservados.' }, 409);
     }
-    const result = await pool.query(`
-      UPDATE events SET title = $1, venue = $2, description = $3, starts_at = $4,
-        available_seats = $5 - (capacity - available_seats), capacity = $5
-      WHERE id = $6 AND $5 >= capacity - available_seats
-        AND ($4 = starts_at OR $4 > NOW())
-    `, [...input, request.params.eventId]);
-    if (!result.rowCount) {
-      response.status(409).json({ message: 'El evento no existe, la nueva fecha ya pasó o el cupo es menor que los lugares reservados.' });
-      return;
-    }
-    response.status(204).end();
+    return c.body(null, 204);
   });
 
-  app.delete('/api/admin/events/:eventId', async (request, response) => {
+  app.delete('/api/admin/events/:eventId', async (c) => {
+    const id = eventId(c.req.param('eventId'));
+    if (!id) return c.json(invalidId, 400);
     try {
-      const result = await pool.query('DELETE FROM events WHERE id = $1', [request.params.eventId]);
-      if (!result.rowCount) {
-        response.status(404).json({ message: 'El evento no existe.' });
-        return;
-      }
-      response.status(204).end();
+      const result = await c.env.DB.prepare('DELETE FROM events WHERE id = ?').bind(id).run();
+      if (!result.meta.changes) return c.json({ message: 'El evento no existe.' }, 404);
+      return c.body(null, 204);
     } catch (error) {
-      if ((error as { code?: string }).code !== '23503') throw error;
-      response.status(409).json({ message: 'Este evento tiene historial de reservaciones y no se puede eliminar.' });
+      if (!d1Error(error, 'FOREIGN KEY constraint failed')) throw error;
+      return c.json({ message: 'Este evento tiene historial de reservaciones y no se puede eliminar.' }, 409);
     }
   });
 
-  app.get('/api/admin/events/:eventId/reservations', async (request, response) => {
-    const { rows } = await pool.query(`
+  app.get('/api/admin/events/:eventId/reservations', async (c) => {
+    const id = eventId(c.req.param('eventId'));
+    if (!id) return c.json(invalidId, 400);
+    const { results } = await c.env.DB.prepare(`
       SELECT reservations.id, users.email, seats, cancellation_code IS NOT NULL AS cancelled
       FROM reservations JOIN users ON users.id = reservations.user_id
-      WHERE event_id = $1 ORDER BY created_at DESC, reservations.id
-    `, [request.params.eventId]);
-    response.json(rows);
+      WHERE event_id = ? ORDER BY created_at DESC, reservations.id
+    `).bind(id).all<{ cancelled: number }>();
+    return c.json(results.map((row) => ({ ...row, cancelled: Boolean(row.cancelled) })));
   });
 }

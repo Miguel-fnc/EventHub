@@ -2,7 +2,8 @@ name: EventHub
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ['feature/**', develop, main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -13,55 +14,63 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: npm ci --prefix backend && npm run build --prefix backend
+      - run: npm ci --prefix backend
+      - name: Backend unit tests
+        run: npm test --prefix backend
+      - name: Type-check backend
+        run: npm run build --prefix backend
       - run: npm ci --prefix frontend && npm run build --prefix frontend
-      - name: Verify container startup
-        env:
-          POSTGRES_PASSWORD: eventhub-ci
+      - name: Integration test on a local Worker with D1
+        working-directory: backend
         run: |
-          docker compose up -d --build
-          curl --fail --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/api/health
-          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8080/api/auth/register
-          docker compose exec -T db psql -v ON_ERROR_STOP=1 -U eventhub -d eventhub -c "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
-          node infra/smoke.mjs
+          npx wrangler d1 migrations apply DB --local
+          npx wrangler dev --port 8787 --ip 127.0.0.1 > wrangler.log 2>&1 &
+          curl --fail --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8787/api/health
+          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8787/api/auth/register
+          npx wrangler d1 execute DB --local --command "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
+          EVENTHUB_URL=http://127.0.0.1:8787 node ../infra/smoke.mjs
       - if: failure()
-        run: docker compose logs
-  publish-and-deploy:
-    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+        run: cat backend/wrangler.log || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+
+  deploy:
+    # develop → Dev, main → Prod. Se habilita con la variable de repositorio DEPLOY_ENABLED=true.
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' && github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     needs: build
+    name: Deploy to ${{ github.ref == 'refs/heads/main' && 'Prod' || 'Dev' }}
+    environment:
+      name: ${{ github.ref == 'refs/heads/main' && 'Prod' || 'Dev' }}
+      url: ${{ vars.APP_URL }}
     runs-on: ubuntu-latest
     concurrency:
-      group: eventhub-production
+      group: eventhub-deploy-${{ github.ref_name }}
       cancel-in-progress: false
     env:
-      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_ENV: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Publish images
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix backend
+      # Despliega exactamente el frontend que pasó las pruebas.
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Apply D1 migrations and deploy the Worker
+        working-directory: backend
+        run: npm run "deploy:$WRANGLER_ENV"
+      - name: Verify health
         env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          APP_URL: ${{ vars.APP_URL }}
         run: |
-          printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          for service in frontend backend; do
-            image="$DOCKERHUB_USERNAME/eventhub-$service:$GITHUB_SHA"
-            docker build -t "$image" "$service"
-            docker push "$image"
-          done
-      - name: Deploy on EC2
-        env:
-          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          install -m 700 -d ~/.ssh
-          install -m 600 /dev/null ~/.ssh/eventhub
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/eventhub
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          tar -czf - compose.yaml infra/deploy.sh backend/sql | ssh -i ~/.ssh/eventhub -o BatchMode=yes "$DEPLOY_TARGET" '
-            set -eu
-            mkdir -p ~/eventhub
-            tar -xzf - -C ~/eventhub
-          '
-          ssh -i ~/.ssh/eventhub -o BatchMode=yes "$DEPLOY_TARGET" \
-            "cd ~/eventhub && FRONTEND_IMAGE=$DOCKERHUB_USERNAME/eventhub-frontend:$GITHUB_SHA BACKEND_IMAGE=$DOCKERHUB_USERNAME/eventhub-backend:$GITHUB_SHA bash infra/deploy.sh"
-
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "$APP_URL/api/health"
