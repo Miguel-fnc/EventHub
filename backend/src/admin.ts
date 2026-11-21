@@ -9,8 +9,12 @@ export function registerAdminRoutes(app: App) {
     const { results } = await c.env.DB.prepare(`
       SELECT id, title, venue, description, starts_at AS startsAt,
              capacity, available_seats AS availableSeats,
-             -- Incluye las canceladas: cualquier reservación impide eliminar el evento.
-             (SELECT COUNT(*) FROM reservations WHERE event_id = events.id) AS reservationCount
+             -- Solo las reservaciones activas impiden eliminar el evento.
+             (SELECT COUNT(*) FROM reservations
+               WHERE event_id = events.id AND cancellation_code IS NULL) AS activeReservations,
+             -- Las canceladas se borran junto con el evento.
+             (SELECT COUNT(*) FROM reservations
+               WHERE event_id = events.id AND cancellation_code IS NOT NULL) AS cancelledReservations
       FROM events ORDER BY starts_at DESC, id
     `).all();
     return c.json(results);
@@ -48,13 +52,22 @@ export function registerAdminRoutes(app: App) {
   app.delete('/api/admin/events/:eventId', async (c) => {
     const id = eventId(c.req.param('eventId'));
     if (!id) return c.json(invalidId, 400);
+    const blocked = 'Este evento tiene reservaciones activas y no se puede eliminar.';
+    // Sin reservaciones activas, se borran las canceladas y el evento en una sola transacción
+    // (batch de D1). La condición se evalúa dentro de cada sentencia, así que una reservación
+    // creada al mismo tiempo nunca se pierde: en ese caso no se borra nada.
+    const noActive = 'NOT EXISTS (SELECT 1 FROM reservations WHERE event_id = ?1 AND cancellation_code IS NULL)';
     try {
-      const result = await c.env.DB.prepare('DELETE FROM events WHERE id = ?').bind(id).run();
-      if (!result.meta.changes) return c.json({ message: 'El evento no existe.' }, 404);
-      return c.body(null, 204);
+      const [, deleted] = await c.env.DB.batch([
+        c.env.DB.prepare(`DELETE FROM reservations WHERE event_id = ?1 AND cancellation_code IS NOT NULL AND ${noActive}`).bind(id),
+        c.env.DB.prepare(`DELETE FROM events WHERE id = ?1 AND ${noActive}`).bind(id)
+      ]);
+      if (deleted.meta.changes) return c.body(null, 204);
+      const exists = await c.env.DB.prepare('SELECT 1 FROM events WHERE id = ?').bind(id).first();
+      return exists ? c.json({ message: blocked }, 409) : c.json({ message: 'El evento no existe.' }, 404);
     } catch (error) {
       if (!d1Error(error, 'FOREIGN KEY constraint failed')) throw error;
-      return c.json({ message: 'Este evento tiene historial de reservaciones y no se puede eliminar.' }, 409);
+      return c.json({ message: blocked }, 409);
     }
   });
 

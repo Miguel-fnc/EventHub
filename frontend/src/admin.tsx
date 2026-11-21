@@ -6,8 +6,11 @@ import type { Session } from './customer';
 type ManagedEvent = {
   id: number; title: string; venue: string; description: string;
   startsAt: string; capacity: number; availableSeats: number;
-  reservationCount: number;
+  activeReservations: number; cancelledReservations: number;
 };
+
+const plural = (count: number, singular: string, pluralForm: string) =>
+  `${count} ${count === 1 ? singular : pluralForm}`;
 type Booking = { id: string; email: string; seats: number; cancelled: boolean };
 
 function localDate(value: string) {
@@ -85,7 +88,10 @@ export function Admin({ session, version, onChange }: {
   }
 
   async function remove(event: ManagedEvent) {
-    if (!window.confirm(`¿Eliminar «${event.title}»?`)) return;
+    const history = event.cancelledReservations > 0
+      ? `\n\nTambién se borrará el historial de ${plural(event.cancelledReservations, 'reservación cancelada', 'reservaciones canceladas')}.`
+      : '';
+    if (!window.confirm(`¿Eliminar «${event.title}»?${history}`)) return;
     setBusy(true);
     setMessage('');
     setError('');
@@ -141,14 +147,14 @@ export function Admin({ session, version, onChange }: {
               setBookingError('');
               setSelected(event);
             }}>{event.id === selected?.id ? 'Ocultar reservaciones' : 'Ver reservaciones'}</button>
-            <button className="danger" disabled={busy || event.reservationCount > 0}
-              aria-describedby={event.reservationCount > 0 ? `no-delete-${event.id}` : undefined}
-              title={event.reservationCount > 0 ? 'Los eventos con historial de reservaciones no se pueden eliminar' : undefined}
+            <button className="danger" disabled={busy || event.activeReservations > 0}
+              aria-describedby={event.activeReservations > 0 ? `no-delete-${event.id}` : undefined}
+              title={event.activeReservations > 0 ? 'Los eventos con reservaciones activas no se pueden eliminar' : undefined}
               onClick={() => void remove(event)}>Eliminar</button>
           </div>
-          {event.reservationCount > 0 && (
+          {event.activeReservations > 0 && (
             <p className="field-note" id={`no-delete-${event.id}`}>
-              No se puede eliminar: tiene {event.reservationCount === 1 ? '1 reservación' : `${event.reservationCount} reservaciones`} en su historial (incluidas las canceladas).
+              No se puede eliminar: tiene {plural(event.activeReservations, 'reservación activa', 'reservaciones activas')}.
             </p>
           )}
           {deleteError?.id === event.id && <p role="alert">{deleteError.message}</p>}

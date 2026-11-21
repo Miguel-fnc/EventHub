@@ -97,7 +97,7 @@ npx wrangler d1 execute DB --remote --env dev --command "UPDATE users SET role =
 npx wrangler d1 execute DB --remote --command "UPDATE users SET role = 'admin' WHERE email = 'admin@ejemplo.com';"
 ```
 
-El resultado debe indicar `changes: 1`. Cierra sesión y vuelve a entrar. Abre **Administrar** para publicar un evento con fecha futura. Verifica desde otra cuenta que aparece en el catálogo y se puede reservar. El panel permite editar eventos, consultar reservaciones activas y canceladas y eliminar eventos sin historial. El cupo total debe cubrir los lugares ya reservados.
+El resultado debe indicar `changes: 1`. Cierra sesión y vuelve a entrar. Abre **Administrar** para publicar un evento con fecha futura. Verifica desde otra cuenta que aparece en el catálogo y se puede reservar. El panel permite editar eventos, consultar reservaciones activas y canceladas y eliminar eventos sin reservaciones activas (sus reservaciones canceladas se borran con el evento). El cupo total debe cubrir los lugares ya reservados.
 
 ## Despliegue en Cloudflare
 

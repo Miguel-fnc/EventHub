@@ -46,15 +46,22 @@ assert.equal((await request('events', 200)).find((item) => item.id === id)?.avai
 const bookings = await request(`${path}/reservations`, 200, adminOptions);
 assert.equal(bookings[0]?.email, customer.email);
 assert.equal(bookings[0]?.cancelled, false);
+const managed = async (eventId) => (await request('admin/events', 200, adminOptions)).find((item) => item.id === eventId);
+// Con una reservación activa el evento no se puede eliminar.
+assert.equal((await managed(id))?.activeReservations, 1);
+await request(path, 409, { ...adminOptions, method: 'DELETE' });
 await request(`reservations/${confirmationCode}/cancel`, 200, { token: client.token, body: {} });
 assert.equal((await request('events', 200)).find((item) => item.id === id)?.availableSeats, 3);
 assert.equal((await request(`${path}/reservations`, 200, adminOptions))[0]?.cancelled, true);
-await request(path, 409, { ...adminOptions, method: 'DELETE' });
-const managed = async (eventId) => (await request('admin/events', 200, adminOptions)).find((item) => item.id === eventId);
-// La reservación cancelada sigue contando como historial: el panel debe saber que no se puede eliminar.
-assert.equal((await managed(id))?.reservationCount, 1);
+// Con solo reservaciones canceladas sí se elimina, junto con ese historial.
+assert.deepEqual(
+  [(await managed(id))?.activeReservations, (await managed(id))?.cancelledReservations], [0, 1]);
+await request(path, 204, { ...adminOptions, method: 'DELETE' });
+assert.equal(await managed(id), undefined);
+assert.equal((await request('events', 200)).find((item) => item.id === id), undefined);
+await request(path, 404, { ...adminOptions, method: 'DELETE' });
 const empty = await request('admin/events', 201, { ...adminOptions, body: event });
-assert.equal((await managed(empty.id))?.reservationCount, 0);
+assert.deepEqual([(await managed(empty.id))?.activeReservations, (await managed(empty.id))?.cancelledReservations], [0, 0]);
 await request(`admin/events/${empty.id}`, 204, { ...adminOptions, method: 'DELETE' });
 console.log('Flujo de cliente y administración verificado.');
 
