@@ -8,7 +8,9 @@ export function registerAdminRoutes(app: App) {
   app.get('/api/admin/events', async (c) => {
     const { results } = await c.env.DB.prepare(`
       SELECT id, title, venue, description, starts_at AS startsAt,
-             capacity, available_seats AS availableSeats
+             capacity, available_seats AS availableSeats,
+             -- Incluye las canceladas: cualquier reservación impide eliminar el evento.
+             (SELECT COUNT(*) FROM reservations WHERE event_id = events.id) AS reservationCount
       FROM events ORDER BY starts_at DESC, id
     `).all();
     return c.json(results);

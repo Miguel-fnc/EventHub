@@ -50,7 +50,11 @@ await request(`reservations/${confirmationCode}/cancel`, 200, { token: client.to
 assert.equal((await request('events', 200)).find((item) => item.id === id)?.availableSeats, 3);
 assert.equal((await request(`${path}/reservations`, 200, adminOptions))[0]?.cancelled, true);
 await request(path, 409, { ...adminOptions, method: 'DELETE' });
+const managed = async (eventId) => (await request('admin/events', 200, adminOptions)).find((item) => item.id === eventId);
+// La reservación cancelada sigue contando como historial: el panel debe saber que no se puede eliminar.
+assert.equal((await managed(id))?.reservationCount, 1);
 const empty = await request('admin/events', 201, { ...adminOptions, body: event });
+assert.equal((await managed(empty.id))?.reservationCount, 0);
 await request(`admin/events/${empty.id}`, 204, { ...adminOptions, method: 'DELETE' });
 console.log('Flujo de cliente y administración verificado.');
 
