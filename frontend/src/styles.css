@@ -59,6 +59,8 @@ input, textarea { width: 100%; padding: .55rem .65rem; border: 1px solid #aaa4be
 button { cursor: pointer; border: 0; border-radius: .65rem; padding: .65rem .95rem; background: var(--purple); color: white; font: inherit; font-weight: 650; }
 :where(button, a, input, textarea):focus-visible { outline: 3px solid #9467ee; outline-offset: 3px; }
 button:disabled { opacity: .65; cursor: wait; }
+button.danger:disabled { cursor: not-allowed; }
+.field-note { color: #55546d; font-size: .88rem; margin: .4rem 0 0; }
 .secondary { background: #eee8fc; color: #3f2390; }
 .danger { background: #fbe7eb; color: #971d40; }
 [role="alert"] { color: #971d40; }
