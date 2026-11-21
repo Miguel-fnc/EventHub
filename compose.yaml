@@ -1,0 +1,14 @@
+# Levanta EventHub desde la imagen publicada en Docker Hub (o la construye en local).
+#   docker compose up -d        →  http://localhost:8787
+services:
+  eventhub:
+    image: ${EVENTHUB_IMAGE:-eventhub:local}
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - eventhub-data:/data
+    restart: unless-stopped
+
+volumes:
+  eventhub-data:

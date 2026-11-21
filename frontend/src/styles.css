@@ -39,6 +39,15 @@ time, .venue { color: #55546d; }
 time { font-size: .88rem; }
 .venue { margin: 0; font-weight: 650; }
 .capacity { display: table; background: #eaf5d6; color: #27441d; border-radius: 2rem; padding: .3rem .75rem; font-weight: 650; font-size: .86rem; }
+.sold-out article { background: #fbfafd; }
+.sold-out .event-art { filter: grayscale(.85); opacity: .7; }
+.capacity.sold-out-badge { background: #fbe7eb; color: #971d40; text-transform: uppercase; letter-spacing: .06em; }
+.sold-out-note { color: #55546d; font-size: .9rem; margin: .5rem 0 0; }
+.site-footer { background: white; border-top: 1px solid var(--line); }
+.footer-content { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem 1.5rem; padding-block: 1.3rem; color: #55546d; font-size: .9rem; }
+.footer-content p { margin: 0; }
+.footer-content .brand { font-size: 1.1rem; font-weight: 750; color: #17182b; }
+.footer-content .brand span { width: 1.6rem; height: 1.6rem; border-radius: .5rem; font-size: .9rem; }
 .account { margin-top: 1.5rem; }
 .account h2 { margin: 0; line-height: 1.2; }
 .account-header, .inline-form, .actions { display: flex; align-items: end; flex-wrap: wrap; gap: .65rem; }

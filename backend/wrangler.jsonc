@@ -4,6 +4,15 @@
   "name": "eventhub",
   "main": "src/index.ts",
   "compatibility_date": "2025-09-01",
+  // Sentry necesita AsyncLocalStorage, incluido en nodejs_compat.
+  "compatibility_flags": ["nodejs_compat"],
+  // Genera source maps del bundle (Cloudflare y Sentry los usan para trazas legibles).
+  "upload_source_maps": true,
+  // Sentry usa el ID de la versión como release si no se define SENTRY_RELEASE.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // SENTRY_DSN y SENTRY_RELEASE los inyecta GitHub Actions al desplegar (--var).
+  // Sin DSN (local y CI) Sentry queda apagado; para probarlo en local usa .dev.vars.
+  "vars": { "SENTRY_ENVIRONMENT": "production" },
   "assets": {
     "directory": "../frontend/dist",
     "binding": "ASSETS",
@@ -24,6 +33,8 @@
     // Entorno Dev (rama develop): `wrangler deploy --env dev`
     "dev": {
       "name": "eventhub-dev",
+      // SENTRY_DEBUG_ROUTE habilita /api/debug/sentry para probar el monitoreo (solo Dev).
+      "vars": { "SENTRY_ENVIRONMENT": "dev", "SENTRY_DEBUG_ROUTE": "true" },
       "d1_databases": [
         {
           "binding": "DB",

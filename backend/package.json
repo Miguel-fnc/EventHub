@@ -15,10 +15,13 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@sentry/cloudflare": "^11.16.0",
+    "@sentry/hono": "^11.16.0",
     "hono": "^4.13.19"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261119.1",
+    "@sentry/cli": "^3.8.2",
     "typescript": "~5.9.3",
     "wrangler": "^4.165.0"
   }

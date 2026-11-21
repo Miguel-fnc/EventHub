@@ -3,8 +3,12 @@ import { BadRequest, now } from './app.ts';
 import type { AppEnv } from './app.ts';
 import { registerAdminRoutes } from './admin.ts';
 import { registerCustomerRoutes } from './customer.ts';
+import { registerMonitoring } from './monitoring.ts';
 
 const app = new Hono<AppEnv>();
+
+// Debe registrarse antes que cualquier ruta para capturar errores y trazas de todas.
+registerMonitoring(app);
 
 app.get('/api/health', async (c) => {
   c.header('Cache-Control', 'no-store');
