@@ -6,7 +6,11 @@ import type { Session } from './customer';
 type ManagedEvent = {
   id: number; title: string; venue: string; description: string;
   startsAt: string; capacity: number; availableSeats: number;
+  activeReservations: number; cancelledReservations: number;
 };
+
+const plural = (count: number, singular: string, pluralForm: string) =>
+  `${count} ${count === 1 ? singular : pluralForm}`;
 type Booking = { id: string; email: string; seats: number; cancelled: boolean };
 
 function localDate(value: string) {
@@ -25,6 +29,8 @@ export function Admin({ session, version, onChange }: {
   const [loadError, setLoadError] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Error al eliminar, mostrado junto al evento correspondiente.
+  const [deleteError, setDeleteError] = useState<{ id: number; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -82,18 +88,24 @@ export function Admin({ session, version, onChange }: {
   }
 
   async function remove(event: ManagedEvent) {
-    if (!window.confirm(`¿Eliminar «${event.title}»?`)) return;
+    const history = event.cancelledReservations > 0
+      ? `\n\nTambién se borrará el historial de ${plural(event.cancelledReservations, 'reservación cancelada', 'reservaciones canceladas')}.`
+      : '';
+    if (!window.confirm(`¿Eliminar «${event.title}»?${history}`)) return;
     setBusy(true);
     setMessage('');
     setError('');
+    setDeleteError(null);
     try {
       await api(`admin/events/${event.id}`, { session, method: 'DELETE' });
       if (editing?.id === event.id) setEditing(null);
       if (selected?.id === event.id) setSelected(null);
-      setMessage('Evento eliminado.');
+      setMessage(`Evento «${event.title}» eliminado.`);
       onChange();
     } catch (failure) {
-      setError(errorText(failure));
+      setDeleteError({ id: event.id, message: errorText(failure) });
+      // Por si alguien reservó mientras tanto: refresca el conteo de reservaciones.
+      onChange();
     } finally {
       setBusy(false);
     }
@@ -135,8 +147,17 @@ export function Admin({ session, version, onChange }: {
               setBookingError('');
               setSelected(event);
             }}>{event.id === selected?.id ? 'Ocultar reservaciones' : 'Ver reservaciones'}</button>
-            <button className="danger" disabled={busy} onClick={() => void remove(event)}>Eliminar</button>
+            <button className="danger" disabled={busy || event.activeReservations > 0}
+              aria-describedby={event.activeReservations > 0 ? `no-delete-${event.id}` : undefined}
+              title={event.activeReservations > 0 ? 'Los eventos con reservaciones activas no se pueden eliminar' : undefined}
+              onClick={() => void remove(event)}>Eliminar</button>
           </div>
+          {event.activeReservations > 0 && (
+            <p className="field-note" id={`no-delete-${event.id}`}>
+              No se puede eliminar: tiene {plural(event.activeReservations, 'reservación activa', 'reservaciones activas')}.
+            </p>
+          )}
+          {deleteError?.id === event.id && <p role="alert">{deleteError.message}</p>}
           {selected?.id === event.id && <section className="booking-details">
             <h4>Reservaciones de {event.title}</h4>
             {bookingError && <p role="alert">{bookingError} <button onClick={onChange}>Reintentar</button></p>}
