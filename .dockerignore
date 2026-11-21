@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+**/.wrangler
+**/dist
+**/.dev.vars*
+**/.env*
+docs
+infra
+*.md

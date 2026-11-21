@@ -1,0 +1,2 @@
+# Copia este archivo como terraform.tfvars (Git lo ignora) y ajusta los valores.
+account_id = "5b936392094b2eb034733500ef3d472c"

@@ -12,6 +12,8 @@ EventHub corre completo en Cloudflare, sin servidores que administrar:
 - **Workers Logs** (observabilidad activada en `wrangler.jsonc`) concentra los logs de la API.
 - **Sentry** captura los errores de la API con stack traces legibles, trazas de rendimiento y releases ligadas a cada commit desplegado.
 - **GitHub Actions** prueba, despliega a Dev (`develop`) y a Prod (`main`), y revisa la disponibilidad cada 15 minutos.
+- **Terraform** (`infra/terraform`) crea y administra las bases D1 de Dev y Prod con el proveedor oficial de Cloudflare.
+- **Docker Hub** recibe en cada despliegue la imagen `eventhub`, que corre la app completa en cualquier máquina.
 
 Hay dos entornos, cada uno con su Worker y su base D1:
 
@@ -29,7 +31,7 @@ Hay dos entornos, cada uno con su Worker y su base D1:
 
 ## Ejecutar en local
 
-Requiere Node.js 24 y npm. No hace falta Docker ni una cuenta de Cloudflare: Wrangler simula el Worker y D1 en tu máquina.
+Requiere Node.js 24 y npm. No hace falta una cuenta de Cloudflare: Wrangler simula el Worker y D1 en tu máquina. Si prefieres no instalar Node.js, consulta [Ejecutar con Docker](#ejecutar-con-docker).
 
 ```powershell
 cd frontend
@@ -54,6 +56,24 @@ npm --prefix backend run build     # verificación de tipos
 ```
 
 Con el Worker local corriendo, la prueba de integración completa es `node infra/smoke.mjs` con `EVENTHUB_URL=http://127.0.0.1:8787` (antes registra `admin@example.test` y promuévelo a admin como se explica abajo).
+
+## Ejecutar con Docker
+
+La imagen trae la app completa (API, frontend y una base D1 local) sobre el runtime oficial de Cloudflare. No necesita Node.js ni cuenta de Cloudflare.
+
+```powershell
+docker run -d --name eventhub -p 8787:8787 -v eventhub-data:/data <usuario-dockerhub>/eventhub:latest
+```
+
+O, desde el repositorio, `docker compose up -d --build`. Abre <http://localhost:8787>. La primera vez aplica las migraciones y carga eventos de ejemplo (desactívalo con `-e SEED_DEMO=false`). Los datos quedan en el volumen `eventhub-data`.
+
+Para promover un admin dentro del contenedor:
+
+```powershell
+docker exec eventhub npx wrangler d1 execute DB --local --persist-to /data --command "UPDATE users SET role = 'admin' WHERE email = 'admin@ejemplo.com';"
+```
+
+La imagen es para demos, QA y desarrollo. Los entornos Dev y Prod corren en Cloudflare Workers.
 
 ## Probar una reservación
 
@@ -83,21 +103,14 @@ El resultado debe indicar `changes: 1`. Cierra sesión y vuelve a entrar. Abre *
 
 ### Preparación (una sola vez)
 
-1. Inicia sesión con Wrangler y crea las dos bases D1. Desde `backend`:
-
-   ```powershell
-   npx wrangler login
-   npx wrangler d1 create eventhub-dev
-   npx wrangler d1 create eventhub-prod
-   ```
-
-   Copia cada `database_id` que imprime Wrangler en `backend/wrangler.jsonc` (sustituye los `00000000-...`) y súbelo en un PR.
+1. Crea las dos bases D1 con **Terraform**, como se explica en [infra/terraform/README.md](infra/terraform/README.md). Copia los IDs de `terraform output d1_database_ids` en los `database_id` de `backend/wrangler.jsonc` y súbelos en un PR.
 
 2. En Cloudflare, crea un API token en **My Profile → API Tokens → Create Token** con la plantilla **Edit Cloudflare Workers** y agrega el permiso **Account → D1 → Edit**. Copia también tu **Account ID** (aparece en **Workers & Pages**, panel derecho).
 
 3. En GitHub (**Settings → Secrets and variables → Actions**):
    - Secretos de repositorio: `CLOUDFLARE_API_TOKEN` y `CLOUDFLARE_ACCOUNT_ID`.
    - Variables de repositorio: `DEPLOY_ENABLED=true`, `DEV_URL` y `PROD_URL` (para el monitoreo).
+   - Docker Hub (service connection): variable `DOCKERHUB_USERNAME` y secreto `DOCKERHUB_TOKEN`, un access token de Docker Hub con permiso **Read & Write**.
    - En **Settings → Environments**, crea `Dev` y `Prod`. En cada uno agrega la variable `APP_URL` con su URL pública (por ejemplo `https://eventhub-dev.<tu-subdominio>.workers.dev`). En `Prod`, activa **Required reviewers** si quieren aprobación manual antes de cada despliegue.
 
 4. (Opcional) Para usar un dominio propio administrado en Cloudflare, agrega en el Worker **Settings → Domains & Routes → Add → Custom domain**, y actualiza `APP_URL` / `PROD_URL`.
@@ -108,7 +121,8 @@ El resultado debe indicar `changes: 1`. Cierra sesión y vuelve a entrar. Abre *
 
 1. Pruebas unitarias, verificación de tipos y compilación del frontend.
 2. Prueba de integración: levanta el Worker con D1 local, registra un admin y ejecuta `infra/smoke.mjs` con el flujo completo de cliente y administración.
-3. Si `DEPLOY_ENABLED=true` y la rama es `develop` o `main`: aplica las migraciones pendientes de D1, empaqueta el Worker con source maps, crea la release en Sentry (sube los source maps y asocia los commits), despliega ese mismo bundle con el frontend que pasó las pruebas, verifica `/api/health` y registra el deploy en Sentry.
+3. Job `docker`: construye la imagen, la levanta y le corre el mismo smoke test. En `develop` la publica en Docker Hub como `<usuario>/eventhub:dev` y `:<sha>`; en `main`, como `:latest` y `:<sha>`.
+4. Si `DEPLOY_ENABLED=true` y la rama es `develop` o `main`: aplica las migraciones pendientes de D1, empaqueta el Worker con source maps, crea la release en Sentry (sube los source maps y asocia los commits), despliega ese mismo bundle con el frontend que pasó las pruebas, verifica `/api/health` y registra el deploy en Sentry.
 
 También se puede desplegar a mano desde `backend` con `npm run deploy:dev` o `npm run deploy:prod`, pero ese despliegue no lleva el DSN ni la release de Sentry: el monitoreo de errores queda apagado hasta el siguiente despliegue desde GitHub Actions.
 
