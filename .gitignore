@@ -161,3 +161,13 @@ vite.config.ts.timestamp-*
 .wrangler/
 .dev.vars*
 wrangler.log
+
+# Terraform: estado local, planes y valores por entorno (pueden contener datos sensibles)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+terraform.tfvars
+*.auto.tfvars
+crash.log
