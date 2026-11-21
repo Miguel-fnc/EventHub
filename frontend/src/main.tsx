@@ -83,34 +83,48 @@ function App() {
         {catalog.status === 'ready' && (
           catalog.events.length === 0 ? <p>No hay eventos programados.</p> : (
             <ul className="event-grid">
-              {catalog.events.map((event) => (
-                <li key={event.id}>
-                  <article><div className="event-art" aria-hidden="true"><span>✦</span></div><div className="event-body">
-                    <time dateTime={event.startsAt}>{dateFormat.format(new Date(event.startsAt))}</time>
-                    <h3>{event.title}</h3>
-                    <p className="venue">{event.venue}</p>
-                    <p>{event.description}</p>
-                    <p className="capacity">
-                      {event.availableSeats === 0 ? 'Agotado' :
-                        event.availableSeats === 1 ? '1 lugar disponible' :
-                          `${event.availableSeats} lugares disponibles`}
-                    </p>
-                    {!session && event.availableSeats > 0 && (
-                      <a href="#cuenta">Inicia sesión para reservar</a>
-                    )}
-                    {session && event.availableSeats > 0 && (
-                      <ReserveForm key={session.token} session={session} eventId={event.id}
-                        available={event.availableSeats} onChange={refreshEvents} />
-                    )}
-                  </div></article>
-                </li>
-              ))}
+              {catalog.events.map((event) => {
+                const soldOut = event.availableSeats === 0;
+                return (
+                  <li key={event.id} className={soldOut ? 'sold-out' : undefined}>
+                    <article><div className="event-art" aria-hidden="true"><span>✦</span></div><div className="event-body">
+                      <time dateTime={event.startsAt}>{dateFormat.format(new Date(event.startsAt))}</time>
+                      <h3>{event.title}</h3>
+                      <p className="venue">{event.venue}</p>
+                      <p>{event.description}</p>
+                      {soldOut ? (
+                        <>
+                          <p className="capacity sold-out-badge">Agotado</p>
+                          <p className="sold-out-note">Este evento ya no tiene lugares disponibles.</p>
+                        </>
+                      ) : (
+                        <p className="capacity">
+                          {event.availableSeats === 1 ? '1 lugar disponible' : `${event.availableSeats} lugares disponibles`}
+                        </p>
+                      )}
+                      {!session && !soldOut && (
+                        <a href="#cuenta">Inicia sesión para reservar</a>
+                      )}
+                      {session && !soldOut && (
+                        <ReserveForm key={session.token} session={session} eventId={event.id}
+                          available={event.availableSeats} onChange={refreshEvents} />
+                      )}
+                    </div></article>
+                  </li>
+                );
+              })}
             </ul>
           )
         )}
       <div id="cuenta"><Account session={session} setSession={setSession} onChange={refreshEvents} version={attempt} /></div>
         {session?.role === 'admin' && <Admin key={session.token} session={session} version={attempt} onChange={refreshEvents} />}
       </main>
+      <footer className="site-footer">
+        <div className="container footer-content">
+          <p className="brand"><span aria-hidden="true">✦</span> EventHub</p>
+          <p>Proyecto de Infraestructura para el Desarrollo Continuo · ITESO · {new Date().getFullYear()}</p>
+        </div>
+      </footer>
     </>
   );
 }
