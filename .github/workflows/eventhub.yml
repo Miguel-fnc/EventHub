@@ -62,10 +62,11 @@ jobs:
         run: |
           docker run -d --name eventhub -p 127.0.0.1:8787:8787 eventhub:ci
           curl --fail --retry 40 --retry-all-errors --retry-delay 2 http://127.0.0.1:8787/api/health
-          curl --fail --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8787/api/auth/register
+          curl --fail --retry 5 --retry-all-errors --retry-delay 2 \
+            --json '{"email":"admin@example.test","password":"eventhub-ci-demo-password"}' http://127.0.0.1:8787/api/auth/register
           docker exec eventhub npx wrangler d1 execute DB --local --persist-to /data \
             --command "UPDATE users SET role = 'admin' WHERE email = 'admin@example.test';"
-          node infra/smoke.mjs
+          EVENTHUB_URL=http://127.0.0.1:8787 node infra/smoke.mjs
       - if: failure()
         run: docker logs eventhub || true
       - name: Log in to Docker Hub

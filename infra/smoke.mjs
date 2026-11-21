@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-const base = process.env.EVENTHUB_URL ?? 'http://127.0.0.1:8080';
+const base = process.env.EVENTHUB_URL ?? 'http://127.0.0.1:8787';
 
 async function request(path, expected, { token, body, method = body ? 'POST' : 'GET' } = {}) {
   const headers = {};
