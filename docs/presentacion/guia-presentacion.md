@@ -121,7 +121,18 @@ Abre estas pestañas, en este orden, con sesión iniciada:
 6. Cloudflare → **Workers & Pages → eventhub**.
 7. El tablero del proyecto (opcional, para el contexto).
 
-## B3. Ensayo
+## B3. Docker listo para la métrica de memoria
+
+1. Abre **Docker Desktop** y espera a que diga *Engine running*. Si no está abierto, `docker` responde *"failed to connect to the docker API"*.
+2. Descarga la imagen con anticipación para no depender del internet del salón:
+
+   ```powershell
+   docker pull miguelfnco/eventhub:latest
+   ```
+
+3. Verifica que el puerto 8787 esté libre: no dejes corriendo `npm run dev` del backend.
+
+## B4. Ensayo
 
 - Haz el recorrido completo de la Parte C una vez el día anterior.
 - Tiempos aproximados: PR checks ~3–5 min (build ~1 min, docker ~3 min), Deploy to Dev ~1–2 min, Deploy to Prod ~1–2 min.
@@ -229,16 +240,38 @@ git push -u origin feature/demo-presentacion
    - **CPU:** **CPU time** por invocación (mediana y percentiles). En Workers se mide el tiempo de CPU que usa cada petición, porque no hay un servidor con un porcentaje de CPU fijo.
    - **Errors** y **Wall time** (duración total de cada petición).
 4. **Base de datos:** **Storage & Databases → D1 → eventhub-prod → Metrics**: consultas leídas y escritas, filas y tamaño de la base.
-5. **Memoria:** Cloudflare Workers es serverless. Cada invocación corre en un *isolate* con un límite de **128 MB** que Cloudflare administra, y el dashboard no muestra una gráfica de uso de memoria como haría con una máquina virtual. Si te piden memoria:
-   - Explícalo así: no hay un servidor propio cuyo consumo administrar; Cloudflare escala y aísla cada petición.
-   - Y como respaldo, muestra la imagen de Docker Hub corriendo con su consumo de CPU y memoria:
+### Memoria (con Docker)
+
+**Qué decir primero:** "Cloudflare Workers es serverless. Cada petición corre en un *isolate* aislado con un límite de **128 MB** que administra Cloudflare. Por seguridad, el runtime no expone el consumo de memoria: un Worker no puede medir la memoria del servidor que comparte con otros clientes. Lo comprobamos: `process.memoryUsage()` devuelve 0 en Workers aunque se reserve memoria. Por eso el dashboard muestra CPU time y requests, pero no memoria. Para mostrar el consumo de memoria de la aplicación usamos la misma app empaquetada en Docker, la imagen que publica nuestro pipeline en Docker Hub."
+
+**Demostración** (Docker Desktop debe estar abierto, ver Parte B):
+
+1. En PowerShell, levanta la imagen publicada en Docker Hub:
 
    ```powershell
    docker run -d --name eventhub-demo -p 8787:8787 miguelfnco/eventhub:latest
+   ```
+
+2. Abre las estadísticas en vivo (se quedan actualizándose cada segundo):
+
+   ```powershell
    docker stats eventhub-demo
    ```
 
-   `docker stats` muestra **CPU %**, **MEM USAGE / LIMIT** y red en vivo. Abre http://localhost:8787 y navega para que se muevan los números. Al terminar: `docker rm -f eventhub-demo`.
+   Columnas a señalar: **CPU %**, **MEM USAGE / LIMIT**, **MEM %** y **NET I/O**.
+
+3. Abre http://localhost:8787 en el navegador y navega (catálogo, crear cuenta, reservar). Verás moverse la CPU, la red y la memoria en la terminal.
+4. Para generar más carga de golpe, en **otra** ventana de PowerShell:
+
+   ```powershell
+   1..200 | ForEach-Object { Invoke-WebRequest http://localhost:8787/api/events -UseBasicParsing | Out-Null }
+   ```
+
+5. Al terminar: **Ctrl + C** en la ventana de `docker stats` y luego `docker rm -f eventhub-demo`.
+
+**Valores de referencia** (medidos en la laptop del equipo): en reposo ~3–4 % de CPU y **~560 MiB** de memoria; con 300 peticiones, **~605 MiB**.
+
+**Aclaración importante si preguntan por la cifra:** esos ~560 MiB son de **todo el contenedor**, que incluye Node.js, Wrangler y el runtime de Cloudflare (workerd) simulando la plataforma completa de forma local. No es lo que consume el Worker en producción, que está limitado a 128 MB por petición.
 
 ---
 
@@ -253,3 +286,6 @@ git push -u origin feature/demo-presentacion
 | Algo sale mal en Prod | **Rollback:** en `backend`, `npx wrangler deployments list` y `npx wrangler rollback` regresan a la versión anterior en segundos. |
 | Sentry no muestra el error de prueba | Espera 30 segundos y recarga **Issues**; revisa que el filtro de entorno incluya `dev`. |
 | No hay datos en Metrics | Navega en la app unos minutos antes; amplía el periodo a 7 días. |
+| `docker` dice *"failed to connect to the docker API"* | Docker Desktop está cerrado: ábrelo y espera *Engine running* (~30 s). |
+| `docker run` dice *"port is already allocated"* | Algo usa el puerto 8787: usa `-p 8788:8787` y abre http://localhost:8788. |
+| `docker run` dice *"name is already in use"* | `docker rm -f eventhub-demo` y vuelve a correrlo. |
