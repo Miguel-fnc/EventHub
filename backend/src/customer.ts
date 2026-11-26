@@ -61,6 +61,8 @@ export function registerCustomerRoutes(app: App) {
       FROM reservations JOIN events ON events.id = reservations.event_id
       WHERE user_id = ? ORDER BY created_at DESC, reservations.id
     `).bind(now(), user.id).all<{ canCancel: number }>();
+    const ultima: any = results[0];
+    console.log('Última reservación del cliente:', ultima.title.trim());
     c.header('Cache-Control', 'no-store');
     return c.json(results.map((row) => ({ ...row, canCancel: Boolean(row.canCancel) })));
   });
