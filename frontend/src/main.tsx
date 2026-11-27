@@ -64,7 +64,7 @@ function App() {
         <section className="hero">
           <div>
             <h1>Tu próximo plan<br />empieza aquí.</h1>
-            <p>Descubre qué está pasando y reserva tu lugar. Demo para la presentacion</p>
+            <p>Descubre qué está pasando y reserva tu lugar. Demo para la presentacion del proyecto</p>
             <a className="hero-link" href="#eventos">Ver eventos <span aria-hidden="true">↓</span></a>
           </div>
           <div className="hero-art" aria-hidden="true"><i></i><i></i><i></i><span>✦</span></div>
